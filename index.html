@@ -377,6 +377,10 @@ tr:hover td{background:#f7fafc}
               <input type="number" id="cash-tendered" class="form-control" placeholder="0.00" oninput="calcChange()">
               <div id="change-display" style="font-size:12px;color:var(--green);margin-top:4px;font-weight:600"></div>
             </div>
+            <div class="form-group">
+              <label class="form-label">📝 Narration / Note</label>
+              <textarea id="sale-narration" class="form-control" rows="2" placeholder="e.g. Home delivery, Festival discount, Credit sale..."></textarea>
+            </div>
             <button class="btn btn-primary" style="width:100%;padding:12px;font-size:14px;justify-content:center" onclick="completeSale()">✓ Complete Sale &amp; Print Invoice</button>
           </div>
         </div>
@@ -398,7 +402,7 @@ tr:hover td{background:#f7fafc}
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Invoice #</th><th>Date &amp; Time</th><th>Customer</th><th>Items</th><th>Subtotal</th><th>Discount</th><th>Total</th><th>Payment</th><th>Actions</th><th>Delete</th></tr></thead>
+            <thead><tr><th>Invoice #</th><th>Date &amp; Time</th><th>Customer</th><th>Items</th><th>Subtotal</th><th>Discount</th><th>Total</th><th>Payment</th><th>Narration</th><th>Actions</th><th>Delete</th></tr></thead>
             <tbody id="sales-table"></tbody>
           </table>
         </div>
@@ -419,7 +423,7 @@ tr:hover td{background:#f7fafc}
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Date</th><th>Supplier</th><th>Bill #</th><th>Items</th><th>Total</th><th>Status</th><th>Actions</th><th>Delete</th></tr></thead>
+            <thead><tr><th>Date</th><th>Supplier</th><th>Bill #</th><th>Items</th><th>Total</th><th>Status</th><th>Narration</th><th>Actions</th><th>Delete</th></tr></thead>
             <tbody id="purchases-table"></tbody>
           </table>
         </div>
@@ -587,6 +591,10 @@ tr:hover td{background:#f7fafc}
           <option value="partial">Partial</option>
         </select>
       </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">📝 Narration / Note</label>
+      <textarea id="pur-narration" class="form-control" rows="2" placeholder="e.g. Monthly stock, Festival stock, Credit purchase..."></textarea>
     </div>
     <div style="margin-bottom:10px">
       <label class="form-label" style="display:block;margin-bottom:8px">Purchase Items</label>
@@ -1221,13 +1229,14 @@ async function completeSale() {
   const custName=document.getElementById('cust-name').value||'Walk-in Customer';
   const custPhone=document.getElementById('cust-phone').value||'';
   const saleItems=cart.map(c=>({product_id:c.pid,product_name:c.name,quantity:c.qty,unit_price:c.price,total_price:c.price*c.qty,gst_rate:c.gst}));
-  const saleData={invoice_no:invNo,customer_name:custName,customer_phone:custPhone,subtotal:sub,discount:disc,gst_amount:gst,total,payment_method:posPayMethod,payment_status:'paid',created_at:new Date().toISOString(),items:saleItems};
+  const saleNarration=document.getElementById('sale-narration').value.trim();
+  const saleData={invoice_no:invNo,customer_name:custName,customer_phone:custPhone,subtotal:sub,discount:disc,gst_amount:gst,total,payment_method:posPayMethod,payment_status:'paid',narration:saleNarration,created_at:new Date().toISOString(),items:saleItems};
   if(DEMO){
     saleData.id='s'+Date.now();
     sales.unshift(saleData);
     cart.forEach(c=>{const p=products.find(x=>x.id===c.pid);if(p)p.stock=Math.max(0,p.stock-c.qty);});
   } else if(sbClient) {
-    const {data:sd,error}=await sbClient.from('sales').insert({invoice_no:invNo,customer_name:custName,customer_phone:custPhone,subtotal:sub,discount:disc,gst_amount:gst,total,payment_method:posPayMethod,payment_status:'paid'}).select().single();
+    const {data:sd,error}=await sbClient.from('sales').insert({invoice_no:invNo,customer_name:custName,customer_phone:custPhone,subtotal:sub,discount:disc,gst_amount:gst,total,payment_method:posPayMethod,payment_status:'paid',narration:saleNarration}).select().single();
     if(error){toast('Error saving sale: '+error.message,'error');return;}
     saleData.id=sd.id;
     await Promise.all(cart.map(c=>sbClient.from('sale_items').insert({sale_id:sd.id,product_id:c.pid,product_name:c.name,quantity:c.qty,unit_price:c.price,total_price:c.price*c.qty,gst_rate:c.gst})));
@@ -1243,6 +1252,7 @@ async function completeSale() {
   document.getElementById('cust-name').value='';
   document.getElementById('cust-phone').value='';
   document.getElementById('bill-disc').value='0';
+  document.getElementById('sale-narration').value='';
   clearCart();
   toast('Sale completed! ₹'+total.toFixed(2),'success');
 }
@@ -1317,6 +1327,7 @@ function buildInvoice(sale) {
     <div style="margin-top:14px;padding:8px 10px;background:#fffbeb;border:1px solid #fbd38d;border-radius:6px;font-size:10px;color:#744210">
       <strong>Tax Summary:</strong> All prices are inclusive of GST. Invoice generated by ShopMate.
     </div>
+    ${sale.narration?`<div style="margin-top:12px;padding:10px 12px;background:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;font-size:12px;color:#1a4731"><strong>📝 Narration:</strong> ${sale.narration}</div>`:''}
     <div class="inv-footer">Thank you for shopping at ${SHOP_NAME}! &nbsp;•&nbsp; Visit us again &nbsp;•&nbsp; ${sale.invoice_no}</div>
   </div>`;
 }
@@ -1354,12 +1365,13 @@ function renderSalesHistory() {
     <td>${parseFloat(s.discount)>0?s.discount+'%':'—'}</td>
     <td style="font-weight:700">${fmtMoney(s.total)}</td>
     <td><span class="badge badge-${s.payment_method==='upi'?'purple':s.payment_method==='card'?'orange':'green'}">${s.payment_method||'cash'}</span></td>
+    <td style="font-size:11px;color:var(--gray);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.narration||''}">${s.narration?'📝 '+s.narration:'—'}</td>
     <td style="white-space:nowrap">
       <button class="btn btn-secondary btn-sm" onclick="viewSaleInvoice('${s.id}')">🧾 View</button>
       <button class="btn btn-primary btn-sm" onclick="printSaleInvoice('${s.id}')">🖨️</button>
     </td>
     <td><button class="btn btn-danger btn-sm btn-icon" onclick="deleteSale('${s.id}')" title="Delete sale">🗑️</button></td>
-  </tr>`).join('')||'<tr class="empty-row"><td colspan="10">No sales found</td></tr>';
+  </tr>`).join('')||'<tr class="empty-row"><td colspan="11">No sales found</td></tr>';
 }
 
 function viewSaleInvoice(sid){const s=sales.find(x=>x.id===sid);if(s)showInvoice(s);}
@@ -1384,9 +1396,10 @@ function renderPurchases() {
     <td>${(p.items||[]).length} items</td>
     <td style="font-weight:700">${fmtMoney(p.total)}</td>
     <td><span class="badge badge-${p.payment_status==='paid'?'green':p.payment_status==='pending'?'red':'orange'}">${p.payment_status}</span></td>
+    <td style="font-size:11px;color:var(--gray);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.narration||''}">${p.narration?'📝 '+p.narration:'—'}</td>
     <td><button class="btn btn-secondary btn-sm" onclick="viewPurDetails('${p.id}')">📄 View</button></td>
     <td><button class="btn btn-danger btn-sm btn-icon" onclick="deletePurchase('${p.id}')" title="Delete purchase">🗑️</button></td>
-  </tr>`).join('')||'<tr class="empty-row"><td colspan="8">No purchases yet</td></tr>';
+  </tr>`).join('')||'<tr class="empty-row"><td colspan="9">No purchases yet</td></tr>';
 }
 
 function openPurchaseModal() {
@@ -1396,6 +1409,7 @@ function openPurchaseModal() {
   document.getElementById('pur-date').value=today();
   document.getElementById('pur-status').value='paid';
   document.getElementById('pur-items-container').innerHTML='';
+  document.getElementById('pur-narration').value='';
   document.getElementById('pur-grand-total').textContent='₹0.00';
   addPurItem();
   document.getElementById('purchase-modal').style.display='flex';
@@ -1437,14 +1451,15 @@ async function savePurchase() {
   const items=purItemsList.filter(p=>!p.removed&&p.product_id&&p.quantity>0);
   if(!items.length){toast('Add at least one item','error');return;}
   const total=items.reduce((a,p)=>a+p.total_price,0);
-  const pur={supplier_name:document.getElementById('pur-supplier').value||'Unknown',bill_no:document.getElementById('pur-billno').value,total,payment_status:document.getElementById('pur-status').value,purchase_date:document.getElementById('pur-date').value,created_at:new Date().toISOString(),items};
+  const purNarration=document.getElementById('pur-narration').value.trim();
+  const pur={supplier_name:document.getElementById('pur-supplier').value||'Unknown',bill_no:document.getElementById('pur-billno').value,total,payment_status:document.getElementById('pur-status').value,purchase_date:document.getElementById('pur-date').value,narration:purNarration,created_at:new Date().toISOString(),items};
   if(DEMO){
     pur.id='pur'+Date.now();
     purchases.unshift(pur);
     items.forEach(item=>{const p=products.find(x=>x.id===item.product_id);if(p)p.stock+=item.quantity;});
     renderPurchases(); renderDashboard(); renderProducts();
   } else if(sbClient){
-    const {data:pd,error}=await sbClient.from('purchases').insert({supplier_name:pur.supplier_name,bill_no:pur.bill_no,total,payment_status:pur.payment_status,purchase_date:pur.purchase_date}).select().single();
+    const {data:pd,error}=await sbClient.from('purchases').insert({supplier_name:pur.supplier_name,bill_no:pur.bill_no,total,payment_status:pur.payment_status,purchase_date:pur.purchase_date,narration:pur.narration}).select().single();
     if(error){toast('Error: '+error.message,'error');return;}
     await Promise.all(items.map(it=>sbClient.from('purchase_items').insert({purchase_id:pd.id,product_id:it.product_id,product_name:it.product_name,quantity:it.quantity,unit_price:it.unit_price,total_price:it.total_price})));
     await Promise.all(items.map(async it=>{const p=products.find(x=>x.id===it.product_id);if(p)await sbClient.from('products').update({stock:p.stock+it.quantity}).eq('id',it.product_id);}));
@@ -1467,6 +1482,7 @@ function buildPurReceipt(p) {
     <div style="margin-bottom:14px;font-size:12px"><strong>Supplier:</strong> ${p.supplier_name}<br><strong>Status:</strong> <span style="text-transform:capitalize;font-weight:600;color:${p.payment_status==='paid'?'var(--green)':'var(--red)'}">${p.payment_status}</span></div>
     <table class="inv-table"><thead><tr><th>Product</th><th style="text-align:center">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Total</th></tr></thead><tbody>${items}</tbody></table>
     <div style="display:flex;justify-content:flex-end"><div style="width:200px"><div class="inv-total-line grand"><span>TOTAL</span><span>${fmtMoney(p.total)}</span></div></div></div>
+    ${p.narration?`<div style="margin-top:12px;padding:10px 12px;background:#ebf8ff;border:1px solid #90cdf4;border-radius:6px;font-size:12px;color:#1a365d"><strong>📝 Narration:</strong> ${p.narration}</div>`:''}
     <div class="inv-footer">${SHOP_NAME} · Purchase record</div>
   </div>`;
 }

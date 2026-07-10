@@ -544,8 +544,9 @@ tr:hover td{background:#f7fafc}
     <div id="page-sales" class="page">
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Sales History</div>
-          <div style="display:flex;gap:8px;align-items:center">
+          <div class="card-title">Sales History <span id="sales-count" class="badge badge-gray" style="margin-left:6px">0</span></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="text" placeholder="🔍 Search invoice #, customer, narration..." class="form-control" style="width:220px;padding:6px 10px" oninput="filterSalesHistory(this.value)">
             <input type="date" id="sales-date-filter" class="form-control" style="width:160px;padding:6px 10px" onchange="renderSalesHistory()">
             <button class="btn btn-secondary btn-sm" onclick="document.getElementById('sales-date-filter').value='';renderSalesHistory()">Show All</button>
             <button class="btn btn-secondary btn-sm" onclick="exportSalesCSV()" title="Export to CSV">⬇️ Export CSV</button>
@@ -1884,10 +1885,23 @@ function doPrint() {
 }
 
 // ===================== SALES HISTORY =====================
-function renderSalesHistory() {
+function renderSalesHistory(filter) {
+  const searchEl = document.querySelector('#page-sales input[type="text"]');
+  if (filter === undefined) filter = searchEl ? searchEl.value : '';
   const df=document.getElementById('sales-date-filter')?.value;
   let list=[...sales];
   if(df) list=list.filter(s=>s.created_at?.startsWith(df));
+  if(filter) {
+    const f=filter.toLowerCase();
+    list=list.filter(s=>
+      (s.invoice_no||'').toLowerCase().includes(f) ||
+      (s.customer_name||'').toLowerCase().includes(f) ||
+      (s.customer_phone||'').includes(f) ||
+      (s.narration||'').toLowerCase().includes(f) ||
+      (s.payment_method||'').toLowerCase().includes(f)
+    );
+  }
+  const countEl=document.getElementById('sales-count'); if(countEl) countEl.textContent=list.length;
   document.getElementById('sales-table').innerHTML=list.map(s=>`<tr>
     <td><span class="badge badge-blue">${s.invoice_no}</span></td>
     <td>${fmtDate(s.created_at)}<br><span style="font-size:10px;color:var(--gray)">${fmtTime(s.created_at)}</span></td>
@@ -1907,6 +1921,8 @@ function renderSalesHistory() {
   </tr>`).join('')||'<tr class="empty-row"><td colspan="11">No sales found</td></tr>';
   renderPendingCustomers();
 }
+
+function filterSalesHistory(v) { renderSalesHistory(v); }
 
 // ===================== PENDING RECEIVABLES FROM CUSTOMERS =====================
 // Computes, per customer, how much has been billed on pending/partial invoices
@@ -2644,34 +2660,60 @@ function saveEditSale(sid) {
 }
 
 // ===================== EDIT PURCHASE =====================
+let editPurItemsList = [];
+let editPurOriginalItems = [];
+
 function editPurchase(pid) {
   const p=purchases.find(x=>String(x.id)===String(pid));
   if(!p){toast('Purchase not found','error');return;}
   const ex=document.getElementById('edit-pur-modal'); if(ex) ex.remove();
+
+  // Snapshot original items so we can correctly reverse their stock effect on save
+  editPurOriginalItems = (p.items||[]).map(i=>({...i}));
+  editPurItemsList = (p.items||[]).map(i=>({
+    product_id: i.product_id ? String(i.product_id) : '',
+    product_name: i.product_name || '',
+    quantity: parseFloat(i.quantity)||1,
+    unit_price: parseFloat(i.unit_price)||0,
+    gst_rate: parseFloat(i.gst_rate)||0,
+    total_price: parseFloat(i.total_price)||0,
+    gst_amount: 0,
+    removed:false
+  }));
+
   const m=document.createElement('div');
   m.id='edit-pur-modal'; m.className='modal-overlay'; m.style.display='flex';
-  m.innerHTML=`<div class="modal">
+  m.innerHTML=`<div class="modal modal-lg">
     <div class="modal-header">
       <div class="modal-title">Edit Purchase — ${p.bill_no||p.id}</div>
       <button class="btn btn-secondary btn-sm btn-icon" onclick="document.getElementById('edit-pur-modal').remove()">X</button>
     </div>
     <div class="modal-body">
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Supplier Name</label><input id="ep-supplier" class="form-control" value="${p.supplier_name||''}"></div>
+        <div class="form-group">
+          <label class="form-label">Supplier Name</label>
+          <input id="ep-supplier" class="form-control" value="${(p.supplier_name||'').replace(/"/g,'&quot;')}" list="pur-supplier-list" autocomplete="off">
+        </div>
         <div class="form-group"><label class="form-label">Bill No</label><input id="ep-billno" class="form-control" value="${p.bill_no||''}"></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Purchase Date</label><input id="ep-date" type="date" class="form-control" value="${p.purchase_date||''}"></div>
-        <div class="form-group"><label class="form-label">Total (Rs)</label><input id="ep-total" type="number" class="form-control" value="${p.total||0}" min="0" step="0.01"></div>
-      </div>
-      <div class="form-group"><label class="form-label">Payment Status</label>
-        <select id="ep-status" class="form-control">
-          <option value="paid" ${p.payment_status==='paid'?'selected':''}>Paid</option>
-          <option value="pending" ${p.payment_status==='pending'?'selected':''}>Pending</option>
-          <option value="partial" ${p.payment_status==='partial'?'selected':''}>Partial</option>
-        </select>
+        <div class="form-group"><label class="form-label">Payment Status</label>
+          <select id="ep-status" class="form-control">
+            <option value="paid" ${p.payment_status==='paid'?'selected':''}>Paid</option>
+            <option value="pending" ${p.payment_status==='pending'?'selected':''}>Pending</option>
+            <option value="partial" ${p.payment_status==='partial'?'selected':''}>Partial</option>
+          </select>
+        </div>
       </div>
       <div class="form-group"><label class="form-label">Narration</label><textarea id="ep-note" class="form-control" rows="2">${p.narration||''}</textarea></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 6px">
+        <label class="form-label" style="margin:0">Products</label>
+        <button class="btn btn-secondary btn-sm" onclick="addEditPurItem()">+ Add Item</button>
+      </div>
+      <div id="ep-items-container"></div>
+      <div style="text-align:right;font-size:15px;font-weight:700;margin-top:8px">Grand Total: <span id="ep-grand-total">₹0.00</span></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="document.getElementById('edit-pur-modal').remove()">Cancel</button>
@@ -2679,19 +2721,194 @@ function editPurchase(pid) {
     </div>
   </div>`;
   document.body.appendChild(m);
+
+  const container=document.getElementById('ep-items-container');
+  container.innerHTML='';
+  editPurItemsList.forEach((item,idx)=>renderEditPurRow(idx,item));
+  updateEpTotal();
 }
+
+function renderEditPurRow(idx,item) {
+  const row=document.createElement('div');
+  row.id='ep-row-'+idx;
+  row.style.cssText='background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:10px;position:relative';
+  row.innerHTML=`
+    <div style="display:grid;grid-template-columns:3fr 0.8fr 1.2fr 0.8fr 1fr auto;gap:8px;align-items:end">
+      <div>
+        <label class="form-label" style="font-size:10px">Product</label>
+        <div style="position:relative">
+          <input type="text" id="ep-search-${idx}" class="form-control" style="font-size:12px;padding:6px 8px"
+            placeholder="🔍 Type to search product..." autocomplete="off" value="${(item.product_name||'').replace(/"/g,'&quot;')}"
+            oninput="epProductSearch(${idx},this.value)"
+            onkeydown="if(event.key==='Escape')hideEpResults(${idx})">
+          <div id="ep-results-${idx}" style="position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:50;max-height:200px;overflow-y:auto;display:none"></div>
+        </div>
+        <div id="ep-selected-${idx}" style="font-size:11px;color:#276749;margin-top:3px;font-weight:600">${item.product_id?'✅ Linked to product #'+item.product_id:'⚠️ Not linked to a product record'}</div>
+      </div>
+      <div>
+        <label class="form-label" style="font-size:10px">Qty</label>
+        <input type="number" min="0.001" step="0.001" value="${item.quantity}" class="form-control" style="font-size:12px;padding:6px 8px" id="ep-qty-${idx}" oninput="setEpQty(${idx},this.value)">
+      </div>
+      <div>
+        <label class="form-label" style="font-size:10px">Buy Price (₹)</label>
+        <input type="number" min="0" step="0.01" value="${item.unit_price}" class="form-control" style="font-size:12px;padding:6px 8px" id="ep-price-${idx}" oninput="setEpPrice(${idx},this.value)">
+      </div>
+      <div>
+        <label class="form-label" style="font-size:10px">GST %</label>
+        <input type="number" min="0" max="28" step="1" value="${item.gst_rate}" class="form-control" style="font-size:12px;padding:6px 8px;text-align:center" id="ep-gst-${idx}" oninput="setEpGst(${idx},this.value)">
+      </div>
+      <div>
+        <label class="form-label" style="font-size:10px">Total (incl. GST)</label>
+        <div id="ep-line-total-${idx}" style="padding:7px 8px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-weight:600;color:#276749">₹0.00</div>
+      </div>
+      <button class="btn btn-danger btn-sm btn-icon" onclick="removeEpRow(${idx})" style="align-self:flex-end">✕</button>
+    </div>`;
+  document.getElementById('ep-items-container').appendChild(row);
+  recalcEpLine(idx);
+}
+
+function addEditPurItem() {
+  const idx=editPurItemsList.length;
+  const item={product_id:'',product_name:'',quantity:1,unit_price:0,gst_rate:0,total_price:0,gst_amount:0,removed:false};
+  editPurItemsList.push(item);
+  renderEditPurRow(idx,item);
+  updateEpTotal();
+}
+
+function epProductSearch(idx, query) {
+  const resultsEl = document.getElementById('ep-results-'+idx);
+  if (!query || query.length < 1) { resultsEl.style.display='none'; return; }
+  const q = query.toLowerCase();
+  const matches = products.filter(p =>
+    (p.name && p.name.toLowerCase().includes(q)) ||
+    (p.barcode && p.barcode.includes(query)) ||
+    (p.hsn_code && p.hsn_code.includes(query))
+  ).slice(0, 10);
+  if (!matches.length) {
+    resultsEl.innerHTML = '<div style="padding:10px;font-size:12px;color:#718096">No products found</div>';
+    resultsEl.style.display = 'block';
+    return;
+  }
+  resultsEl.innerHTML = matches.map(p => {
+    const stk = parseInt(p.stock)||0;
+    return `<div onclick="selectEditPurProduct(${idx},'${p.id}')"
+      style="padding:9px 12px;cursor:pointer;border-bottom:1px solid #f0f4f8;display:flex;justify-content:space-between;align-items:center;transition:background .1s"
+      onmouseover="this.style.background='#f0fff4'" onmouseout="this.style.background=''">
+      <div>
+        <div style="font-size:12px;font-weight:600;color:#1a202c">${p.name}</div>
+        <div style="font-size:10px;color:#718096">${p.barcode||''} · ${p.unit||'pcs'} · HSN: ${p.hsn_code||'—'} · GST: ${p.gst_rate||0}%</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;margin-left:8px">
+        <div style="font-size:12px;font-weight:700;color:#c05621">${fmtMoney(p.buy_price)}</div>
+        <div style="font-size:10px;color:${stk>0?'#276749':'#c53030'}">${stk>0?stk+' in stock':'Out of stock'}</div>
+      </div>
+    </div>`;
+  }).join('');
+  resultsEl.style.display = 'block';
+}
+
+function selectEditPurProduct(idx, pid) {
+  const p = products.find(x => String(x.id)===String(pid));
+  if (!p) return;
+  editPurItemsList[idx].product_id   = String(pid);
+  editPurItemsList[idx].product_name = p.name;
+  editPurItemsList[idx].quantity      = editPurItemsList[idx].quantity||1;
+  const srchEl = document.getElementById('ep-search-'+idx);
+  if (srchEl) srchEl.value = p.name;
+  const selEl  = document.getElementById('ep-selected-'+idx);
+  if (selEl)  selEl.innerHTML = '✅ '+p.name+' | HSN: '+(p.hsn_code||'—')+' | Stock: '+p.stock+' '+p.unit;
+  const priceEl = document.getElementById('ep-price-'+idx);
+  if (priceEl) priceEl.value = p.buy_price||0;
+  const gstEl   = document.getElementById('ep-gst-'+idx);
+  if (gstEl)    gstEl.value  = p.gst_rate||0;
+  hideEpResults(idx);
+  setEpPrice(idx, p.buy_price||0);
+  setEpGst(idx, p.gst_rate||0);
+}
+
+function hideEpResults(idx) {
+  const el = document.getElementById('ep-results-'+idx);
+  if (el) el.style.display='none';
+}
+
+function setEpQty(i,v){ editPurItemsList[i].quantity=parseFloat(v)||1; recalcEpLine(i); }
+function setEpPrice(i,v){ editPurItemsList[i].unit_price=parseFloat(v)||0; recalcEpLine(i); }
+function setEpGst(i,v){ editPurItemsList[i].gst_rate=parseFloat(v)||0; recalcEpLine(i); }
+
+function recalcEpLine(i) {
+  const qty  = parseFloat(editPurItemsList[i].quantity)||1;
+  const price= parseFloat(editPurItemsList[i].unit_price)||0;
+  const gst  = parseFloat(editPurItemsList[i].gst_rate)||0;
+  const base = qty * price;
+  const tax  = base * (gst/100);
+  const total= base + tax;
+  editPurItemsList[i].total_price = total;
+  editPurItemsList[i].gst_amount  = tax;
+  const el = document.getElementById('ep-line-total-'+i);
+  if (el) el.textContent = fmtMoney(total) + (gst>0 ? ' (Tax: '+fmtMoney(tax)+')' : '');
+  updateEpTotal();
+}
+
+function removeEpRow(i){
+  editPurItemsList[i].removed=true;
+  document.getElementById('ep-row-'+i)?.remove();
+  updateEpTotal();
+}
+
+function updateEpTotal(){
+  const items = editPurItemsList.filter(p=>!p.removed);
+  const grand = items.reduce((a,p)=>a+parseFloat(p.total_price||0),0);
+  const el = document.getElementById('ep-grand-total');
+  if (el) el.textContent = fmtMoney(grand);
+}
+
+// Close ep- search results when clicking outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('[id^="ep-row-"]')) {
+    document.querySelectorAll('[id^="ep-results-"]').forEach(el => el.style.display='none');
+  }
+});
 
 function saveEditPurchase(pid) {
   const p=purchases.find(x=>String(x.id)===String(pid)); if(!p) return;
-  p.supplier_name=document.getElementById('ep-supplier').value;
-  p.bill_no=document.getElementById('ep-billno').value;
-  p.purchase_date=document.getElementById('ep-date').value;
-  p.total=parseFloat(document.getElementById('ep-total').value)||0;
-  p.payment_status=document.getElementById('ep-status').value;
-  p.narration=document.getElementById('ep-note').value;
-  if(DEMO){document.getElementById('edit-pur-modal').remove();renderPurchases();toast('Purchase updated!','success');return;}
-  api('PUT','purchases',{supplier_name:p.supplier_name,bill_no:p.bill_no,purchase_date:p.purchase_date,total:p.total,payment_status:p.payment_status,narration:p.narration},parseInt(pid))
-    .then(()=>loadAll()).then(()=>{document.getElementById('edit-pur-modal').remove();renderPurchases();toast('Purchase updated!','success');})
+
+  const items = editPurItemsList.filter(it=>!it.removed && parseFloat(it.quantity)>0);
+  if(!items.length){ toast('Purchase must have at least one item','error'); return; }
+
+  p.supplier_name   = document.getElementById('ep-supplier').value;
+  p.bill_no         = document.getElementById('ep-billno').value;
+  p.purchase_date   = document.getElementById('ep-date').value;
+  p.payment_status  = document.getElementById('ep-status').value;
+  p.narration       = document.getElementById('ep-note').value;
+  p.total           = items.reduce((a,it)=>a+parseFloat(it.total_price||0),0);
+
+  if(DEMO){
+    // Reverse stock added by the original items, then apply the new items' stock
+    editPurOriginalItems.forEach(old=>{
+      if(old.product_id){
+        const prod=products.find(x=>String(x.id)===String(old.product_id));
+        if(prod) prod.stock=Math.max(0,parseFloat(prod.stock||0)-parseFloat(old.quantity||0));
+      }
+    });
+    items.forEach(it=>{
+      if(it.product_id){
+        const prod=products.find(x=>String(x.id)===String(it.product_id));
+        if(prod) prod.stock=parseFloat(prod.stock||0)+parseFloat(it.quantity||0);
+      }
+    });
+    p.items=items.map(it=>({...it}));
+    document.getElementById('edit-pur-modal').remove();
+    renderPurchases(); renderDashboard(); renderProducts();
+    toast('Purchase updated!','success');
+    return;
+  }
+
+  api('PUT','purchases',{
+    supplier_name:p.supplier_name, bill_no:p.bill_no, purchase_date:p.purchase_date,
+    total:p.total, payment_status:p.payment_status, narration:p.narration, items
+  }, parseInt(pid))
+    .then(()=>loadAll())
+    .then(()=>{document.getElementById('edit-pur-modal').remove();renderPurchases();renderDashboard();renderProducts();toast('Purchase updated!','success');})
     .catch(e=>toast('Error: '+e.message,'error'));
 }
 
